@@ -7,7 +7,7 @@ pub fn render(stdout: &mut Stdout, editor: &Editor) -> Result<()> {
     execute!(stdout, Clear(ClearType::All), cursor::MoveTo(0, 0))?;
 
     for (row, line) in editor.text.lines().enumerate() {
-        write!(stdout, "{}", line)?;                          // prints text + '\n' if present
+        write!(stdout, "{}", line)?; // prints text + '\n' if present
         execute!(stdout, cursor::MoveTo(0, (row + 1) as u16))?; // reset x to 0 for next row
     }
 

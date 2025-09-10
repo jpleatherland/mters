@@ -7,12 +7,39 @@ use ropey::Rope;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone)]
+enum EditorMode {
+    Normal,
+    Insert,
+    // Visual,
+    // Command,
+}
+
+#[derive(Clone)]
+// For future use: e.g., pending multi-key commands
+// Currently unused
+struct Pending {
+    count: Option<usize>,
+    register: Option<char>,
+    prefix: Vec<Key>,
+}
+
+impl Pending {
+    fn clear(&mut self) {
+        self.count = None;
+        self.register = None;
+        self.prefix.clear();
+    }
+}
+
+#[derive(Clone)]
 pub struct Editor {
     pub cursor_row: usize,
     pub cursor_gcol: usize,      // grapheme cluster column
     desired_gcol: Option<usize>, // for vertical moves
     pub text: Rope,
     caret_abs: usize,
+    mode: EditorMode,
+    pending: Pending,
 
     #[cfg(debug_assertions)]
     last_newline_bol: Option<(usize, usize)>,
@@ -26,6 +53,12 @@ impl Editor {
             desired_gcol: None,
             text: Rope::new(),
             caret_abs: 0,
+            mode: EditorMode::Insert,
+            pending: Pending {
+                count: None,
+                register: None,
+                prefix: Vec::new(),
+            },
             #[cfg(debug_assertions)]
             last_newline_bol: None,
         }
