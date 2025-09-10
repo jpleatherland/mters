@@ -19,12 +19,21 @@ fn main() -> Result<()> {
     loop {
         if event::poll(Duration::from_millis(250))? {
             if let Event::Key(key_event) = event::read()? {
-                let command = input::map_key(key_event);
-                if let input::EditorCommand::Quit = command {
-                    break;
+                let kmr = input::map_key(key_event, editor.mode(), editor.pending_mut());
+
+                match kmr {
+                    input::KeyMappingResult::Command(cmd) => {
+                        if let input::EditorCommand::Quit = cmd {
+                            break;
+                        }
+                        editor = editor.handle_command(cmd);
+                        renderer::render(&mut stdout, &editor)?;
+                    }
+                    input::KeyMappingResult::UpdatePending => {
+                        // optional: render a “waiting for second key…” UI
+                    }
+                    input::KeyMappingResult::Noop => {}
                 }
-                editor = editor.handle_command(command);
-                renderer::render(&mut stdout, &editor)?;
             }
         }
     }

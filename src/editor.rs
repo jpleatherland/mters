@@ -1,4 +1,5 @@
 use crate::input::EditorCommand;
+use crossterm::event::KeyCode;
 
 use crate::graphemes::{
     abs_char_to_line_gcol, line_gcol_to_abs_char, next_grapheme_abs_char, prev_grapheme_abs_char,
@@ -6,8 +7,8 @@ use crate::graphemes::{
 use ropey::Rope;
 use unicode_segmentation::UnicodeSegmentation;
 
-#[derive(Clone)]
-enum EditorMode {
+#[derive(Clone, Copy)]
+pub enum EditorMode {
     Normal,
     Insert,
     // Visual,
@@ -17,17 +18,25 @@ enum EditorMode {
 #[derive(Clone)]
 // For future use: e.g., pending multi-key commands
 // Currently unused
-struct Pending {
-    count: Option<usize>,
-    register: Option<char>,
-    prefix: Vec<Key>,
+pub struct Pending {
+    pub count: Option<usize>,
+    pub register: Option<char>,
+    pub prefix: Vec<KeyCode>,
 }
 
 impl Pending {
-    fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.count = None;
         self.register = None;
         self.prefix.clear();
+    }
+    pub fn push(&mut self, kc: KeyCode) {
+        self.prefix.push(kc);
+    }
+    pub fn take_count(&mut self) -> usize {
+        let n = self.count.unwrap_or(1);
+        self.count = None;
+        return n;
     }
 }
 
@@ -53,7 +62,7 @@ impl Editor {
             desired_gcol: None,
             text: Rope::new(),
             caret_abs: 0,
-            mode: EditorMode::Insert,
+            mode: EditorMode::Normal,
             pending: Pending {
                 count: None,
                 register: None,
@@ -62,6 +71,14 @@ impl Editor {
             #[cfg(debug_assertions)]
             last_newline_bol: None,
         }
+    }
+
+    pub fn mode(&self) -> EditorMode {
+        self.mode
+    }
+
+    pub fn pending_mut(&mut self) -> &mut Pending {
+        &mut self.pending
     }
 
     #[inline]
@@ -107,6 +124,21 @@ impl Editor {
         self.caret_abs = line_gcol_to_abs_char(&self.text, self.cursor_row, self.cursor_gcol);
     }
 
+    // pub fn handle_key_event(mut self, ev: KeyEvent) -> Self {
+    //     let result = crate::input::map_key(ev, self.mode, &mut self.pending);
+    //     match result {
+    //         KeyMappingResult::Command(cmd) => {
+    //             self.pending.clear();
+    //
+    //             match cmd {
+    //                 _ => self.handle_command(cmd),
+    //             }
+    //         }
+    //         KeyMappingResult::UpdatePending => self,
+    //         KeyMappingResult::Noop => self,
+    //     }
+    // }
+
     pub fn handle_command(&self, command: EditorCommand) -> Self {
         let mut new = self.clone();
 
@@ -140,6 +172,16 @@ impl Editor {
             }
         }
         match command {
+            EditorCommand::EnterInsertMode => {
+                new.mode = EditorMode::Insert;
+                return new;
+            }
+
+            EditorCommand::EnterNormalMode => {
+                new.mode = EditorMode::Normal;
+                return new;
+            }
+
             // ── Horizontal, grapheme‑aware ────────────────────────────────────────────
             EditorCommand::MoveLeft => {
                 let here = new.caret_abs;
@@ -167,20 +209,21 @@ impl Editor {
                     new.cursor_row -= 1;
                     let tgt = new.desired_gcol.unwrap();
                     new.cursor_gcol = new.clamp_gcol_on_row(new.cursor_row, tgt);
-                    new.sync_caret_from_visual(); // NEW
+                    new.sync_caret_from_visual();
                     trace(&new, "after move up");
                 }
+                new.clear_desired_gcol();
             }
-
             EditorCommand::MoveDown => {
                 if new.cursor_row + 1 < new.text.len_lines() {
                     new.set_desired_gcol();
                     new.cursor_row += 1;
                     let tgt = new.desired_gcol.unwrap();
                     new.cursor_gcol = new.clamp_gcol_on_row(new.cursor_row, tgt);
-                    new.sync_caret_from_visual(); // NEW
+                    new.sync_caret_from_visual();
                     trace(&new, "after move down");
                 }
+                new.clear_desired_gcol();
             }
 
             // ── Insert: cursor is grapheme‑based; edits happen at char indices ───────
@@ -188,20 +231,24 @@ impl Editor {
                 let at = new.caret_abs; // single truth
 
                 if c == '\n' {
+                    let at = new.caret_abs;
                     new.text.insert(at, "\n");
-                    // Move caret to just after the newline
-                    let next = next_grapheme_abs_char(&new.text, at);
-                    new.caret_abs = next;
+                    // Move caret to just after the inserted '\n' (BOL of next line)
+                    new.caret_abs = at + 1;
                     new.sync_visual_from_caret();
 
                     #[cfg(debug_assertions)]
                     {
                         let bol_b = new.text.line_to_byte(new.cursor_row);
                         new.last_newline_bol = Some((new.cursor_row, bol_b));
+                        eprintln!(
+                            "[after newline insert] row={} gcol={} | caret_abs={}",
+                            new.cursor_row, new.cursor_gcol, new.caret_abs
+                        );
                     }
 
-                    trace(&new, "after newline insert");
                     new.clear_desired_gcol();
+                    return new; // early return so we don't fall through
                 } else {
                     // inside EditorCommand::InsertChar(c), before inserting non-'\n'
                     #[cfg(debug_assertions)]
@@ -226,6 +273,23 @@ impl Editor {
                     trace(&new, "after char insert");
                     new.clear_desired_gcol();
                 }
+            }
+            EditorCommand::InsertNewline => {
+                let at = new.caret_abs; // single truth
+                new.text.insert(at, "\n");
+                // Move caret to just after the newline
+                let next = next_grapheme_abs_char(&new.text, at);
+                new.caret_abs = next;
+                new.sync_visual_from_caret();
+
+                #[cfg(debug_assertions)]
+                {
+                    let bol_b = new.text.line_to_byte(new.cursor_row);
+                    new.last_newline_bol = Some((new.cursor_row, bol_b));
+                }
+
+                trace(&new, "after newline insert");
+                new.clear_desired_gcol();
             }
 
             // ── Backspace: delete previous grapheme cluster ───────────────────────────
@@ -265,41 +329,27 @@ impl Editor {
                 let len = new.text.len_chars();
 
                 if here < len {
-                    // 1) Prefer deleting an actual line break starting at caret.
-                    let del = if new.text.char(here) == '\n' {
-                        Some(1) // Unix line break
+                    if new.text.char(here) == '\n' {
+                        new.text.remove(here..here + 1);
                     } else if new.text.char(here) == '\r' {
-                        // Handle CRLF pair as a single break if present
                         if here + 1 < len && new.text.char(here + 1) == '\n' {
-                            Some(2)
+                            new.text.remove(here..here + 2); // CRLF as one
                         } else {
-                            Some(1)
-                        }
-                    } else {
-                        None
-                    };
-
-                    if let Some(n) = del {
-                        new.text.remove(here..here + n);
-                    } else {
-                        // 2) Otherwise, delete the *next grapheme cluster* (normal Delete)
-                        let next = next_grapheme_abs_char(&new.text, here);
-                        if next > here {
-                            new.text.remove(here..next);
-                        } else if here + 1 <= len {
-                            // ultra-defensive fallback
                             new.text.remove(here..here + 1);
                         }
+                    } else {
+                        // delete next grapheme
+                        let next = next_grapheme_abs_char(&new.text, here);
+                        let end = if next > here { next } else { here + 1 };
+                        new.text.remove(here..end);
                     }
-
-                    // Caret stays at same absolute index
+                    // caret stays at `here`
                     new.sync_visual_from_caret();
                     trace(&new, "after delete");
                 }
-
                 new.clear_desired_gcol();
             }
-            EditorCommand::Quit | EditorCommand::Unknown => {}
+            EditorCommand::Quit | _ => {}
         }
 
         new
