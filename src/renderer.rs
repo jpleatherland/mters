@@ -6,18 +6,15 @@ use std::io::{Result, Stdout, Write};
 pub fn render(stdout: &mut Stdout, editor: &Editor) -> Result<()> {
     execute!(stdout, Clear(ClearType::All), cursor::MoveTo(0, 0))?;
 
-    // Option A: use Ropey's line iterator
-    for line in editor.text.lines() {
-        // Lines include the trailing newline (if present), so use `write!`, not `writeln!`.
-        write!(stdout, "{}", line)?; // RopeSlice implements Display, so `{}` works
+    for (row, line) in editor.text.lines().enumerate() {
+        write!(stdout, "{}", line)?;                          // prints text + '\n' if present
+        execute!(stdout, cursor::MoveTo(0, (row + 1) as u16))?; // reset x to 0 for next row
     }
 
-    // If you're still using a char/grapheme-based column without width calculations:
     execute!(
         stdout,
         cursor::MoveTo(editor.cursor_gcol as u16, editor.cursor_row as u16),
     )?;
-
     stdout.flush()?;
     Ok(())
 }

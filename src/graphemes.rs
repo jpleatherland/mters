@@ -1,5 +1,3 @@
-// src/graphemes.rs
-
 use ropey::{
     str_utils::{byte_to_char_idx, char_to_byte_idx},
     Rope,
